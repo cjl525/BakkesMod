@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+bakkesplugins_cars.cfg
+bakkesplugins_cars.json

@@ -8,10 +8,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 #include <functional>
 #include <sstream>
-#include <vector>
 
 using namespace std::string_literals;
 
@@ -216,14 +214,6 @@ void ExpandedPresetsPlugin::RegisterConsoleCommands()
                                       ImportVanillaPresets();
                                   },
                                   "Import presets from presets.data into the expanded manager", PERMISSION_ALL);
-
-    cvarManager->registerNotifier("expandedpresets_import_bakkesplugins",
-                                  [this](const std::vector<std::string> &args)
-                                  {
-                                      const bool overwrite = args.size() > 1 && (args[1] == "overwrite" || args[1] == "1");
-                                      ImportBakkesPluginsCatalog(overwrite);
-                                  },
-                                  "Import presets exported from bakkesplugins.com", PERMISSION_ALL);
 }
 
 void ExpandedPresetsPlugin::RenderPresetList()
@@ -243,19 +233,6 @@ void ExpandedPresetsPlugin::RenderPresetList()
     {
         presetManager->SaveToStorage();
     }
-    ImGui::SameLine();
-    const bool overwriteExisting = ImGui::GetIO().KeyShift;
-    if (ImGui::Button("Import catalog"))
-    {
-        ImportBakkesPluginsCatalog(overwriteExisting);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted("Imports bakkesplugins.com car presets from bakkesplugins_cars.cfg.");
-        ImGui::TextUnformatted("Hold Shift to overwrite presets with matching names.");
-        ImGui::EndTooltip();
-    }
 
     ImGui::Separator();
 
@@ -263,9 +240,6 @@ void ExpandedPresetsPlugin::RenderPresetList()
 
     if (ImGui::BeginChild("preset_list_scroller", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar))
     {
-        std::vector<std::size_t> filteredIndices;
-        filteredIndices.reserve(presets.size());
-
         for (std::size_t i = 0; i < presets.size(); ++i)
         {
             const auto &preset = presets[i];
@@ -279,32 +253,20 @@ void ExpandedPresetsPlugin::RenderPresetList()
                 }
             }
 
-            filteredIndices.push_back(i);
-        }
-
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(filteredIndices.size()));
-        while (clipper.Step())
-        {
-            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+            const bool selected = static_cast<int>(i) == selectedPresetIndex;
+            const std::string label = preset.name + "##preset_item_" + std::to_string(i);
+            if (ImGui::Selectable(label.c_str(), selected))
             {
-                const auto index = filteredIndices[static_cast<std::size_t>(row)];
-                const auto &preset = presets[index];
-                const bool selected = static_cast<int>(index) == selectedPresetIndex;
-                const std::string label = preset.name + "##preset_item_" + std::to_string(index);
-                if (ImGui::Selectable(label.c_str(), selected))
-                {
-                    selectedPresetIndex = static_cast<int>(index);
-                    editingPreset = preset;
-                }
+                selectedPresetIndex = static_cast<int>(i);
+                editingPreset = preset;
+            }
 
-                if (ImGui::IsItemHovered())
-                {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Loadout code:");
-                    ImGui::TextWrapped("%s", preset.loadoutCode.c_str());
-                    ImGui::EndTooltip();
-                }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Loadout code:");
+                ImGui::TextWrapped("%s", preset.loadoutCode.c_str());
+                ImGui::EndTooltip();
             }
         }
     }
@@ -458,34 +420,6 @@ void ExpandedPresetsPlugin::ImportVanillaPresets()
             stream << " (duplicates were overwritten)";
         }
         cvarManager->log(stream.str());
-    }
-}
-
-void ExpandedPresetsPlugin::ImportBakkesPluginsCatalog(bool overwriteExisting)
-{
-    if (!presetManager)
-    {
-        return;
-    }
-
-    const auto storageDir = presetManager->GetStorageDirectory();
-    const std::filesystem::path catalogPath = storageDir / "bakkesplugins_cars.cfg";
-
-    if (!std::filesystem::exists(catalogPath))
-    {
-        if (cvarManager)
-        {
-            cvarManager->log("ExpandedPresets: Catalog file not found at " + catalogPath.string());
-            cvarManager->log("ExpandedPresets: Run the download script or copy bakkesplugins_cars.cfg into this folder.");
-        }
-        return;
-    }
-
-    const auto imported = presetManager->ImportFromFile(catalogPath, overwriteExisting);
-    if (imported > 0)
-    {
-        selectedPresetIndex = -1;
-        ResetEditingPreset();
     }
 }
 

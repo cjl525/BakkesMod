@@ -47,7 +47,6 @@ private:
     void RenderPresetEditor();
     void RenderPreviewPanel();
     void ImportVanillaPresets();
-    void ImportBakkesPluginsCatalog(bool overwriteExisting);
     void ApplyPresetToCar(const CustomPreset &preset, bool previewOnly) const;
     void ResetEditingPreset();
 };

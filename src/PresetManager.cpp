@@ -1,11 +1,9 @@
 #include "PresetManager.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <vector>
 
 #include "bakkesmod/wrappers/GameWrapper.h"
 
@@ -110,21 +108,6 @@ void PresetManager::LoadFromStorage()
         preset.name = TrimWhitespace(tokens[0]);
         preset.loadoutCode = TrimWhitespace(tokens[1]);
 
-        if (preset.name.empty() || preset.loadoutCode.empty())
-        {
-            continue;
-        }
-
-        if (preset.name.empty() || preset.loadoutCode.empty())
-        {
-            continue;
-        }
-
-        if (preset.name.empty() || preset.loadoutCode.empty())
-        {
-            continue;
-        }
-
         if (tokens.size() >= 3)
         {
             preset.customization.primaryColor = ParseColorToken(tokens[2]);
@@ -193,11 +176,6 @@ CustomPresetCollection &PresetManager::GetPresets() noexcept
     return presets;
 }
 
-std::filesystem::path PresetManager::GetStorageDirectory() const
-{
-    return storageFilePath.parent_path();
-}
-
 std::optional<CustomPreset> PresetManager::FindPreset(const std::string &name) const
 {
     const auto it = std::find_if(presets.begin(), presets.end(),
@@ -228,14 +206,14 @@ std::size_t PresetManager::FindPresetIndex(const std::string &name) const
     return static_cast<std::size_t>(std::distance(presets.begin(), it));
 }
 
-void PresetManager::AddOrUpdatePreset(const CustomPreset &preset, bool overwriteExisting)
+void PresetManager::AddOrUpdatePreset(const CustomPreset &preset)
 {
     const auto index = FindPresetIndex(preset.name);
     if (index >= presets.size())
     {
         presets.push_back(preset);
     }
-    else if (overwriteExisting)
+    else
     {
         presets[index] = preset;
     }
@@ -319,112 +297,6 @@ std::vector<std::string> PresetManager::TokenizeLine(const std::string &line)
     }
 
     return tokens;
-}
-
-std::size_t PresetManager::ImportFromFile(const std::filesystem::path &path, bool overwriteExisting)
-{
-    std::ifstream file(path);
-    if (!file)
-    {
-        if (cvarManager)
-        {
-            cvarManager->log("ExpandedPresets: Failed to open catalog file: " + path.string());
-        }
-        return 0;
-    }
-
-    std::size_t imported = 0;
-    std::size_t skipped = 0;
-
-    std::string line;
-    while (std::getline(file, line))
-    {
-        line = TrimWhitespace(line);
-        if (line.empty() || line.front() == '#')
-        {
-            continue;
-        }
-
-        const auto tokens = TokenizeLine(line);
-        if (tokens.size() < 2)
-        {
-            continue;
-        }
-
-        CustomPreset preset;
-        preset.name = TrimWhitespace(tokens[0]);
-        preset.loadoutCode = TrimWhitespace(tokens[1]);
-
-        if (preset.name.empty() || preset.loadoutCode.empty())
-        {
-            continue;
-        }
-
-        if (tokens.size() >= 3)
-        {
-            preset.customization.primaryColor = ParseColorToken(tokens[2]);
-        }
-        if (tokens.size() >= 4)
-        {
-            preset.customization.accentColor = ParseColorToken(tokens[3]);
-        }
-        if (tokens.size() >= 5)
-        {
-            preset.customization.carLabel = TrimWhitespace(tokens[4]);
-        }
-        if (tokens.size() >= 6)
-        {
-            preset.customization.decalLabel = TrimWhitespace(tokens[5]);
-        }
-        if (tokens.size() >= 7)
-        {
-            preset.customization.wheelsLabel = TrimWhitespace(tokens[6]);
-        }
-        if (tokens.size() >= 8)
-        {
-            preset.customization.paintFinishMatte = tokens[7] == "1" || tokens[7] == "true" || tokens[7] == "matte";
-        }
-        if (tokens.size() >= 9)
-        {
-            preset.customization.paintFinishPearlescent = tokens[8] == "1" || tokens[8] == "true" || tokens[8] == "pearlescent";
-        }
-
-        const auto index = FindPresetIndex(preset.name);
-        const auto isNewPreset = index >= presets.size();
-        const auto previousSize = presets.size();
-
-        AddOrUpdatePreset(preset, overwriteExisting);
-
-        const bool inserted = isNewPreset && presets.size() > previousSize;
-        const bool updated = !isNewPreset && overwriteExisting;
-
-        if (inserted || updated)
-        {
-            ++imported;
-        }
-        else if (!isNewPreset)
-        {
-            ++skipped;
-        }
-    }
-
-    if (imported > 0)
-    {
-        SaveToStorage();
-    }
-
-    if (cvarManager)
-    {
-        std::stringstream stream;
-        stream << "ExpandedPresets: Imported " << imported << " presets from " << path.filename().string();
-        if (!overwriteExisting && skipped > 0)
-        {
-            stream << " (" << skipped << " duplicates skipped)";
-        }
-        cvarManager->log(stream.str());
-    }
-
-    return imported;
 }
 
 PresetPaintColor PresetManager::ParseColorToken(const std::string &token)

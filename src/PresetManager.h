@@ -20,15 +20,11 @@ public:
     [[nodiscard]] const CustomPresetCollection &GetPresets() const noexcept;
     [[nodiscard]] CustomPresetCollection &GetPresets() noexcept;
 
-    [[nodiscard]] std::filesystem::path GetStorageDirectory() const;
-
     std::optional<CustomPreset> FindPreset(const std::string &name) const;
     std::size_t FindPresetIndex(const std::string &name) const;
 
-    void AddOrUpdatePreset(const CustomPreset &preset, bool overwriteExisting = true);
+    void AddOrUpdatePreset(const CustomPreset &preset);
     void RemovePreset(const std::string &name);
-
-    std::size_t ImportFromFile(const std::filesystem::path &path, bool overwriteExisting);
 
 private:
     std::shared_ptr<GameWrapper> gameWrapper;

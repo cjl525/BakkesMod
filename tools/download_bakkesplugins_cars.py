@@ -6,182 +6,43 @@ pipe-delimited format understood by the Expanded Presets plugin. Because the
 website is protected by Cloudflare, the script attempts to use the optional
 ``cloudscraper`` module when it is available. Without it you may receive HTTP
 403 errors; install the dependency via ``pip install cloudscraper`` if that
-happens.  If the popular ``requests`` package is unavailable the script falls
-back to Python's standard ``urllib`` module so Windows users can run it with a
-vanilla interpreter.
+happens.
 
 The generated file contains one preset per line using the following schema:
 
     Name|LoadoutCode|primaryR,primaryG,primaryB|accentR,accentG,accentB|
     Car|Decal|Wheels|MatteFlag|PearlescentFlag
 
-Use the ``--install`` switch to copy the resulting ``bakkesplugins_cars.cfg``
-directly into your BakkesMod data folder. The script attempts to locate common
-install paths automatically but you can supply ``--install-path`` to override
-it.
+Copy the resulting ``bakkesplugins_cars.cfg`` file into the
+``bakkesmod/data/ExpandedPresets`` folder and run the
+``expandedpresets_import_bakkesplugins`` console command (or click the
+"Import catalog" button in the UI) to merge the presets.
 """
 
+from __future__ import annotations
+
 import argparse
-import json
 import logging
-import os
-import shutil
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
-try:  # pragma: no cover - dependency is optional
+try:
     import cloudscraper  # type: ignore
 except ImportError:  # pragma: no cover - dependency is optional
     cloudscraper = None  # type: ignore
 
 try:
     import requests
-except ImportError:  # pragma: no cover - requests is optional now
-    requests = None  # type: ignore
-
-if requests is None:  # pragma: no cover - executed only when requests missing
-    import urllib.error
-    import urllib.parse
-    import urllib.request
+except ImportError as exc:  # pragma: no cover - requests should always exist
+    raise SystemExit("requests is required to run this script") from exc
 
 LOGGER = logging.getLogger("bakkesplugins")
 BASE_URL = "https://bakkesplugins.com"
 CATALOG_ENDPOINT = f"{BASE_URL}/api/presets"
 DETAIL_ENDPOINT = f"{BASE_URL}/api/presets/{{slug}}"
-
-DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/119.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-}
-
-
-class HTTPStatusError(RuntimeError):
-    """Raised when an HTTP request returns a non-success status code."""
-
-    def __init__(self, status_code: int, body: str):
-        super().__init__(f"HTTP {status_code}: {body[:200]}")
-        self.status_code = status_code
-        self.body = body
-
-
-class SimpleResponse:
-    def __init__(self, status_code: int, text: str):
-        self.status_code = status_code
-        self._text = text
-        self._json: Optional[object] = None
-
-    def raise_for_status(self) -> None:
-        if not 200 <= self.status_code < 300:
-            raise HTTPStatusError(self.status_code, self._text)
-
-    def json(self) -> object:
-        if self._json is None:
-            self._json = json.loads(self._text or "{}")
-        return self._json
-
-
-class SimpleSession:
-    """Fallback HTTP session using urllib when requests is unavailable."""
-
-    def __init__(self) -> None:
-        self.headers = DEFAULT_HEADERS.copy()
-
-    def get(self, url: str, *, params: Optional[dict] = None, timeout: int = 30) -> SimpleResponse:
-        if params:
-            query = urllib.parse.urlencode(params)
-            delimiter = "&" if "?" in url else "?"
-            url = f"{url}{delimiter}{query}"
-
-        request = urllib.request.Request(url, headers=self.headers)
-
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310 - network request is intended
-                text = response.read().decode("utf-8")
-                status = response.getcode() or 0
-        except urllib.error.HTTPError as exc:  # pragma: no cover - error path
-            text = exc.read().decode("utf-8", errors="ignore")
-            status = exc.code
-            return SimpleResponse(status, text)
-        except urllib.error.URLError as exc:  # pragma: no cover - error path
-            raise RuntimeError(f"Failed to fetch {url}: {exc}") from exc
-
-        return SimpleResponse(status, text)
-
-
-def iter_candidate_data_dirs() -> Iterable[Path]:
-    env_data_dir = os.environ.get("BAKKESMOD_DATA_DIR") or os.environ.get("BAKKESMOD_DATA")
-    if env_data_dir:
-        yield Path(env_data_dir)
-
-    env_root = os.environ.get("BAKKESMOD_DIR")
-    if env_root:
-        yield Path(env_root) / "data"
-        yield Path(env_root) / "bakkesmod" / "data"
-
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        base = Path(appdata) / "bakkesmod" / "bakkesmod"
-        yield base / "data"
-
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if local_appdata:
-        base = Path(local_appdata) / "bakkesmod" / "bakkesmod"
-        yield base / "data"
-
-    home = Path.home()
-    manual_candidates = [
-        home / "AppData" / "Roaming" / "bakkesmod" / "bakkesmod" / "data",
-        home / "AppData" / "Local" / "bakkesmod" / "bakkesmod" / "data",
-        home / "Documents" / "BakkesMod" / "data",
-        home / "BakkesMod" / "data",
-        home / "bakkesmod" / "data",
-    ]
-    for candidate in manual_candidates:
-        yield candidate
-
-
-def determine_install_path(override: Optional[Path], output_name: str) -> Optional[Path]:
-    if override is not None:
-        override = override.expanduser()
-        if override.is_dir() or not override.suffix:
-            try:
-                override.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:  # pragma: no cover - filesystem edge case
-                LOGGER.error("Failed to create directory %s: %s", override, exc)
-                return None
-            return override / output_name
-        try:
-            override.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:  # pragma: no cover - filesystem edge case
-            LOGGER.error("Failed to prepare %s: %s", override.parent, exc)
-            return None
-        return override
-
-    for base in iter_candidate_data_dirs():
-        base = base.expanduser()
-        if not base.exists() or not base.is_dir():
-            continue
-
-        destination_dir = base
-        if destination_dir.name.lower() != "expandedpresets":
-            destination_dir = destination_dir / "ExpandedPresets"
-
-        try:
-            destination_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:  # pragma: no cover - filesystem edge case
-            LOGGER.debug("Failed to prepare %s: %s", destination_dir, exc)
-            continue
-
-        return destination_dir / output_name
-
-    return None
 
 
 @dataclass
@@ -216,17 +77,23 @@ class Preset:
         )
 
 
-def create_session() -> Any:
-    if cloudscraper is not None and requests is not None:  # pragma: no cover - optional dependency
+def create_session() -> requests.Session:
+    if cloudscraper is not None:  # pragma: no cover - optional dependency
         LOGGER.debug("Using cloudscraper session")
         return cloudscraper.create_scraper()
 
-    if requests is not None:
-        session = requests.Session()
-        session.headers.update(DEFAULT_HEADERS)
-        return session
-
-    return SimpleSession()
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/119.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+        }
+    )
+    return session
 
 
 def clamp_color(value: Optional[float]) -> float:
@@ -301,7 +168,7 @@ def normalise_preset(raw: dict) -> Optional[Preset]:
     )
 
 
-def fetch_catalog_page(session: Any, page: int, page_size: int) -> dict:
+def fetch_catalog_page(session: requests.Session, page: int, page_size: int) -> dict:
     params = {"type": "cars", "perPage": page_size, "page": page}
     LOGGER.debug("Fetching catalog page %s", page)
     response = session.get(CATALOG_ENDPOINT, params=params, timeout=30)
@@ -314,7 +181,7 @@ def fetch_catalog_page(session: Any, page: int, page_size: int) -> dict:
     return response.json()
 
 
-def iter_catalog(session: Any, limit: Optional[int], page_size: int, sleep: float) -> Iterable[dict]:
+def iter_catalog(session: requests.Session, limit: Optional[int], page_size: int, sleep: float) -> Iterable[dict]:
     page = 1
     fetched = 0
     last_page: Optional[int] = None
@@ -340,7 +207,7 @@ def iter_catalog(session: Any, limit: Optional[int], page_size: int, sleep: floa
             time.sleep(sleep)
 
 
-def enrich_entry(session: Any, entry: dict) -> dict:
+def enrich_entry(session: requests.Session, entry: dict) -> dict:
     slug = entry.get("slug") or entry.get("uuid")
     if not slug:
         return entry
@@ -350,12 +217,12 @@ def enrich_entry(session: Any, entry: dict) -> dict:
         details = response.json()
         if isinstance(details, dict):
             entry = {**details, **entry}
-    except Exception as exc:
+    except requests.HTTPError as exc:
         LOGGER.warning("Failed to fetch detail for %s: %s", slug, exc)
     return entry
 
 
-def build_presets(session: Any, raw_entries: Iterable[dict], fetch_details: bool) -> List[Preset]:
+def build_presets(session: requests.Session, raw_entries: Iterable[dict], fetch_details: bool) -> List[Preset]:
     presets: List[Preset] = []
     for raw in raw_entries:
         if fetch_details:
@@ -388,18 +255,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Fetch individual preset details to obtain full loadout data",
     )
-    parser.add_argument(
-        "--install",
-        action="store_true",
-        help="Copy the generated file into the ExpandedPresets data directory",
-    )
-    parser.add_argument(
-        "--install-path",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="Override the destination directory or file when using --install",
-    )
     parser.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARNING, ...)")
     return parser.parse_args(argv)
 
@@ -416,26 +271,6 @@ def main(argv: Sequence[str]) -> int:
         return 1
 
     write_presets(presets, args.output)
-    if args.install or args.install_path is not None:
-        destination = determine_install_path(args.install_path, args.output.name)
-        if destination is None:
-            LOGGER.error(
-                "Unable to determine the BakkesMod data directory automatically. "
-                "Pass --install-path to specify it explicitly."
-            )
-            return 1
-
-        try:
-            if destination.resolve() == args.output.resolve():
-                LOGGER.info("Catalog already generated at %s", destination)
-            else:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(args.output, destination)
-                LOGGER.info("Copied catalog to %s", destination)
-        except OSError as exc:
-            LOGGER.error("Failed to copy catalog to %s: %s", destination, exc)
-            return 1
-
     return 0
 
 
